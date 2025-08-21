@@ -1,0 +1,13 @@
+Package: scAFAP
+Type: Package
+Title: Adaptive Fragment-based Alternative Polyadenylation Analysis
+Version: 0.1.0
+Author: Min Su
+Maintainer: Min Su <yourself@somewhere.net>
+Description: 
+    A framework for adaptive fragment-based analysis of alternative polyadenylation (APA) from single-cell RNA-seq data. 
+    It identifies and quantifies APA isoforms by leveraging fragment size and polyA reads.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.3.2
