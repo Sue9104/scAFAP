@@ -38,19 +38,25 @@ adaptive_detect_pas <- function(gene.oi, inbam, outdir, sample,
   reads <- extract_bam_coverage(gene_info, inbam, prefix, env_data$samtools)
   if (reads < 200) return(NULL)
 
-  junc_res <- analyze_splicing_junctions(gene_info, prefix, env_data$junc_anno, plot = plot)
+  junc_res <- analyze_splicing_junctions(gene_info, prefix, env_data$junc_anno, plot = T)
   if (is.null(junc_res)) return(NULL)
   newCoords <- junc_res$newCoord
   oldCoords <- as.integer(names(newCoords))
 
   # --- Step 3: Perform peak calling ---
   data <- perform_peak_calling(prefix, newCoords)
+  cov_data <- data$cov_data
+  raw_peaks <-data$raw_peaks
   if (is.null(data$raw_peaks)) return(NULL)
 
   # --- Step 4: Annotate peaks with poly-A reads ---
   peak_data <- annotate_and_refine_peaks(gene_info, data, prefix, newCoords, oldCoords, plot = T)
   peaks <- peak_data$peaks
-  # print(peak_data$plot)
+  print(peak_data$plot)
+  cov_data %>% ggplot(aes(x=start)) +
+    geom_point(aes(y=counts)) + geom_point(aes(y=splines), color = 'blue') +
+    geom_vline(xintercept = raw_peaks$summit, color = 'red')
+
   if (is.null(peaks)) return(NULL)
 
   # --- Step 5: Run MCMC analysis (if needed) and generate final output ---
@@ -186,7 +192,7 @@ perform_peak_calling <- function(prefix, newCoords) {
   candidates.gr <- candidates.gr[GenomicRanges::width(candidates.gr) >= 70]
   if (length(candidates.gr) == 0) return(NULL)
   candidates.gr <- GenomicRanges::reduce(
-    GenomicRanges::resize(candidates.gr, fix = 'center', width = GenomicRanges::width(candidates.gr) + 500)
+    GenomicRanges::resize(candidates.gr, fix = 'center', width = GenomicRanges::width(candidates.gr) + 600)
   )
   GenomicRanges::start(candidates.gr) <-
     dplyr::if_else(GenomicRanges::start(candidates.gr) < 1, 1, GenomicRanges::start(candidates.gr))
@@ -259,7 +265,7 @@ annotate_and_refine_peaks <- function(gene_info, data, prefix, newCoords, oldCoo
     pa_reads <- sum(cov3pa.df[candidates_pa, 'counts'])
     preads <-
       cov3pa.df[candidates_pa, ] %>% dplyr::arrange(end) %>%
-      group_by(g = cut_width(start, width = 100, boundary = 0)) %>%
+      group_by(g = cut_width(start, width = 50, boundary = 0)) %>%
       arrange(desc(counts)) %>% dplyr::slice_head(n = 1) %>% ungroup() %>%
       dplyr::group_by(g = cumsum(c(0, diff(end) >= 50))) %>%
       dplyr::arrange(dplyr::desc(counts)) %>% dplyr::slice_head(n = 1) %>%
@@ -273,31 +279,51 @@ annotate_and_refine_peaks <- function(gene_info, data, prefix, newCoords, oldCoo
   q <- ifelse(q == 0, 0.005, q)
   d <- round(qnorm(1 - q) * sigma) - 20
   d <- ifelse(gene_info$strand == "+", d, -d)
-  find_summit <- function(pread, peaks) {
-    dists <- pread - d - peaks$summit
-    summit <- dplyr::if_else(any(abs(dists) < 100), peaks$summit[which.min(abs(dists))], NA_integer_)
-    return(summit)
+  find_summit <- function(pread) {
+    final_summit <- NA_integer_
+    valids <- (sign(d)*(pread - raw_peaks$summit) >= 50) & (sign(d)*(pread - raw_peaks$summit) <= 200)
+    if (sum(valids) > 0){
+      if (sum(valids) == 1){
+        summit <- raw_peaks$summit[which(valids)]
+      } else if (sum(valids) > 1) {
+        ids <- which(valids)
+        dists <- pread - d - raw_peaks$summit[ids]
+        if (any(abs(dists) < 100)){
+          summit <- raw_peaks$summit[ ids[which.min(abs(dists))] ]
+        }
+      }
+      if (preads[which.min(abs(summit + d - preads))] == pread){
+        final_summit <- summit
+      }
+    }
+    return(final_summit)
   }
-  pread2summit <- tibble::tibble(pread = preads)
-  pread2summit$summit <- sapply(preads, find_summit, raw_peaks)
+
   pos2splines <- cov_data %>% dplyr::pull(splines, name = start)
   pos2counts <- cov_data %>% dplyr::pull(counts, name = start)
-  pread2summit$splines <- pos2splines[as.character(preads - d)]
-  pread2summit$counts <- pos2counts[as.character(preads)]
+  preads.df <- tibble::tibble(
+    pread = preads,
+    counts = pos2counts[as.character(preads)],
+    in_peak = sapply(preads - d, function(x) any((raw_peaks$start <= x) & (raw_peaks$end >= x))),
+    splines = pos2splines[as.character(preads - d)],
+    summit = sapply(preads, find_summit)
+  ) %>% dplyr::filter(pread != 0)
 
   min_pa_counts <- stats::quantile(cov_data[cov_data$counts > 1, 'splines'], 0.5, na.rm = T)
-  pread2summit <-
-    pread2summit %>%
-    dplyr::filter(pread != 0, (!is.na(summit)) | ((splines > min_pa_counts) & (counts >= 3)) ) %>%
-    dplyr::group_by(g = dplyr::if_else(is.na(summit), pread, summit)) %>%
-    dplyr::arrange(summit, abs(pread - summit) < 50, dplyr::desc(splines)) %>%
+  preads.df <-
+    preads.df %>%
+    dplyr::filter( (!is.na(summit)) | (in_peak & (counts >= 3)) | ((splines > min_pa_counts) & (counts >= 3)) ) %>%
+    dplyr::mutate(summit = dplyr::if_else(is.na(summit), pread - d, summit)) %>%
+    dplyr::group_by(summit) %>%
+    dplyr::arrange(summit, dplyr::desc(splines)) %>%
     slice_head(n=1) %>% ungroup()
 
   peaks <-
-    dplyr::full_join(raw_peaks, dplyr::select(pread2summit, pread, summit), by = "summit") %>%
+    dplyr::full_join(raw_peaks, dplyr::select(preads.df, pread, summit), by = "summit") %>%
     dplyr::mutate(pa = dplyr::if_else(is.na(pread), summit + d, pread),
                   is_peak = dplyr::if_else(is.na(height), F, T),
-                  summit = dplyr::coalesce(summit, pread - d),
+                  seqnames = dplyr::coalesce(seqnames, raw_peaks$seqnames[1]),
+                  strand = dplyr::coalesce(strand, gene_info$strand),
                   start = dplyr::coalesce(start, summit - 3 * sigma),
                   end = dplyr::coalesce(end, summit + 3 * sigma),
                   width = dplyr::coalesce(width, 6 * sigma)) %>%
@@ -305,7 +331,12 @@ annotate_and_refine_peaks <- function(gene_info, data, prefix, newCoords, oldCoo
                   end = dplyr::if_else((gene_info$strand == "+") & (!is.na(pread)), pread + 20, end)) %>%
     dplyr::mutate(start = dplyr::if_else(start <= 0, 1, start),
                   end = dplyr::if_else(end > max(newCoords), max(newCoords), end),
-                  width = end - start + 1)
+                  width = end - start + 1,
+                  pa = dplyr::case_when(
+                    pa <= 0 ~ 1,
+                    pa >= max(newCoords) ~ max(newCoords),
+                    .default = pa
+                  ))
 
   # gene belongs
   pa.gr <- GenomicRanges::GRanges(seqnames = gene_info$chrom, strand = gene_info$strand,
@@ -330,7 +361,7 @@ annotate_and_refine_peaks <- function(gene_info, data, prefix, newCoords, oldCoo
                   start = if_else((strand == '+') & (width > 350) & (!do_mcmc), end - 349, start),
                   width = end - start + 1)
   peaks$total <- apply(peaks, 1, function(x) {
-    ids <- (cov_data$start >= x[["start"]]) & (cov_data$start >= x[["end"]])
+    ids <- (cov_data$start >= x[["start"]]) & (cov_data$start <= x[["end"]])
     sum(cov_data[ids, 'counts'])
   })
   write.csv(peaks, file = stringr::str_glue("{prefix}.peaks.csv"), quote = F, row.names = F)
@@ -409,7 +440,7 @@ run_mcmc <- function(cov_data, peaks, prefix, py3, mcmc_py,
     cat(cmd, "\n", file = stringr::str_glue("{dirname(prefix)}/mcmc_cmd.sh"), append = TRUE)
     if (run_mode == 'precise') cmd <- stringr::str_glue("{cmd} --infer")
     logger::log_info(cmd)
-    system(cmd, intern = F)
+    # system(cmd, intern = F)
   }
   return(do_mcmc)
 }

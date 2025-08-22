@@ -1,14 +1,13 @@
 import os
-import uuid
-import socket
 import pytensor
-unique_id = uuid.uuid4()
-hostname = socket.gethostname()
-cache_dir = os.path.join(os.path.expanduser('~'), f'.pymc_cache/{hostname}_{unique_id}')
-pytensor.config.compiledir = cache_dir
-os.environ['NUMBA_CACHE_DIR'] = cache_dir
-os.environ['PYTENSOR_CACHE_DIR'] = cache_dir
 
+pytensor.config.floatX = 'float32'
+pytensor.config.allow_gc = False 
+print(f'PYMC cache dir: {pytensor.config.compiledir}')
+
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, message="The figure layout has changed to tight")
@@ -28,7 +27,7 @@ import pytensor.tensor as pt
 import nutpie
 
 print(f"Running on PyMC v{pm.__version__}")
-print(f'PYMC cache dir: {cache_dir}')
+
 # Set random seed for reproducibility
 RANDOM_SEED = 8927
 rng = np.random.default_rng(RANDOM_SEED)
