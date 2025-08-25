@@ -1,3 +1,44 @@
+#' Calculate Gene Coverage from a BAM File
+#'
+#' This function uses the `pandepth` tool to calculate gene sequencing coverage from
+#' an input BAM file. It then reads the coverage statistics, filters for genes
+#' that meet predefined thresholds (sites >= 100 and total_depth >= 200),
+#' and returns the names of the genes that satisfy these criteria.
+#'
+#' @param inbam A string specifying the path to the input BAM file.
+#' @param anno_dir A string specifying the path to the annotation directory
+#'   containing the `coding_genes.bed` file.
+#' @param outdir A string specifying the path to the output directory where
+#'   temporary files will be stored.
+#' @return A character vector containing the names of the genes that meet the
+#'   coverage filtering criteria.
+#' @export
+#' @importFrom stringr str_glue
+bam_to_genes <- function(inbam, anno_dir, outdir, sample){
+  # calculate cov
+  genes.bed <- stringr::str_glue("{anno_dir}/coding_genes.bed")
+  genes.df <- read.table(genes.bed)
+  id2genes <- setNames(genes.df$V6,
+                       stringr::str_glue('{genes.df$V1}_{genes.df$V2}_{genes.df$V3}'))
+
+  cmd <- stringr::str_glue('pandepth -t 8 -d 5 -i {inbam} -b  {genes.bed} ',
+                          '-o {outdir}/{sample}.gene_cov')
+  logger::log_debug(cmd)
+  system(cmd, intern = F)
+
+  covs.df <- read.table(stringr::str_glue('{outdir}/{sample}.gene_cov.bed.stat.gz'),
+                        col.names = c("chrom", "start", "end", "id", "width",
+                                   "sites", "total_depth", "percent", "gene_depth"),
+                        sep = '\t')
+  covs.df$avg_depth <- round(covs.df$total_depth / covs.df$sites)
+  ids <- covs.df[(covs.df$sites >= 100) & (covs.df$total_depth >= 2000) & (covs.df$avg_depth >=10),"id"]
+  genes <- as.vector(id2genes[ids])
+  logger::log_debug(sample, " available genes: ", length(genes))
+  return(genes)
+}
+
+
+
 #' @title Convert Rle to a Single-Base data.table
 #' @description This function takes an Rle object, converts it to a GenomicRanges
 #'   object, and then expands it into a data.table with one row for each base pair.
@@ -62,8 +103,8 @@ bam_to_cov <- function(gene_bam, prefix, mispriming) {
   # Step 2: Remove reads overlapping with mispriming sites
   reads3_prime_end <- GenomicRanges::resize(GenomicRanges::granges(gal), fix = 'end', width = 1)
   gal <- gal[!reads3_prime_end %over% mispriming]
-  if (length(gal) == 0) return(0)
   reads <- length(gal)
+  if (length(gal) == 0) return(0)
 
   # Step 3: Convert reads to a data.table for efficient manipulation
   tags <- S4Vectors::mcols(gal)
@@ -93,6 +134,8 @@ bam_to_cov <- function(gene_bam, prefix, mispriming) {
   # Counts for all reads
   all_stops <- dt[, .N, by = .(seqnames, start = stops, end = stops, strand)]
   data.table::setnames(all_stops, "N", "counts")
+  # skip if high cov sites < 50
+  if (sum(all_stops$counts >=3) < 50) return(0)
   data.table::fwrite(all_stops, file = stringr::str_glue("{prefix}.cov3.all.csv"), row.names = FALSE)
 
   # Counts for reads with "pa" tag
@@ -168,10 +211,11 @@ flank_cov <- function(gr, ex = 5) {
 #' @importFrom dplyr coalesce
 run_splines <- function(x, y, spar = NULL, cv = FALSE) {
   if (cv){
-    res <- stats::smooth.spline(x, y, cv = TRUE)
+    fit <- stats::smooth.spline(x, y, cv = TRUE)
   } else {
     spar <- dplyr::coalesce(spar, 0.7)
-    res <- stats::smooth.spline(x, y, spar = spar)
+    fit <- stats::smooth.spline(x, y, spar = spar)
   }
-  return(res$y)
+  final <- predict(fit, x = x)$y
+  return(final)
 }

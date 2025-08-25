@@ -37,7 +37,7 @@ find_flexible_peaks <- function(pos, values,
   if (stats::quantile(values, 0.99, na.rm = TRUE) > 20) {
     min_cov_used <- max(min_cov_used, min_cov)
   }
-  is_valid <- values >= min_cov_used
+  is_valid <- (values >= min_cov_used) & (c(0, diff(pos)) < 100)
   if (!any(is_valid)) return(empty_peaks)
   valid_rle <- rle(is_valid)
   points <- cumsum(c(1, valid_rle$lengths))
@@ -68,6 +68,7 @@ find_flexible_peaks <- function(pos, values,
   for (region_id in seq_along(valid_regions)) {
     region_start <- valid_regions[[region_id]][1]
     region_end <- valid_regions[[region_id]][2]
+    if (pos[region_end] - pos[region_start] < min_peak_width) next
     # make sure the region is long enough to hold a peak pattern
     if ((region_end - region_start + 1) < (max(nups, ndowns) + 1)) next
 
@@ -110,7 +111,7 @@ find_flexible_peaks <- function(pos, values,
     }
 
     # Continuous upward trend
-    if ((region_id == length(valid_regions)) & all(down_rle$values == F) & (length(ups) == 1)) {
+    if (all(down_rle$values == F) & (length(ups) == 1)) {
       up_width <- up_rle$lengths[up_rle$values == T]
       up_ratio <- up_width / sum(up_rle$lengths)
       if ((up_width >= min_peak_width) & (up_ratio >= 0.9)){
@@ -129,12 +130,14 @@ find_flexible_peaks <- function(pos, values,
       }
     }
     # Continuous downward trend
-    if ((region_id == 1) & all(up_rle$values == F) & (length(downs) == 1)) {
-      down_width <- down_rle$lengths[down_rle$values == T]
+    if ( all(up_rle$values == F) & (length(downs) == 1)) {
+      points <- cumsum(c(1, down_rle$lengths))
+      rid <- which(down_rle$values == T)
+      down_width <- down_rle$lengths[rid]
       down_ratio <- down_width / sum(down_rle$lengths)
       if ((down_width >= min_peak_width) & (down_ratio >= 0.9)){
-        s <- downs
-        e <- downs + down_width
+        s <- points[rid]
+        e <- s + down_width - 1
         min_height <- values[e]
         max_height <- values[s]
         summit_id <- min(s + 100, e)

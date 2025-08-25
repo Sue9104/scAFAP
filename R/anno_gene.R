@@ -62,9 +62,12 @@ find_mispriming_sites <- function(fa_file, anno_dir) {
 #' @importFrom stringr str_glue
 #' @importFrom logger log_debug
 process_genomic_annotations <- function(gtf_file, anno_dir, cores) {
+  suppressPackageStartupMessages({library(dplyr)})
   message("Processing genomic regions and gene models...")
   # Load and process GTF file
-  gencode.gr <- plyranges::read_gff2(gtf_file)
+  gencode.gr <-
+    plyranges::read_gff2(gtf_file) %>%
+    dplyr::filter(!grepl('^G|^ML|^J|^K',seqnames))
 
   txid2genename <- gencode.gr %>%
     dplyr::filter(type == "transcript") %>%
@@ -79,10 +82,15 @@ process_genomic_annotations <- function(gtf_file, anno_dir, cores) {
       } else {
         gene_type == "protein_coding"
       })
+  all_genes.gr %>%
+    plyranges::select(gene_name) %>%
+    dplyr::as_tibble() %>%
+    group_by(gene_name) %>%
+    summarise(seqnames = seqnames[1], start = min(start), end = max(end),
+              width = end - start + 1, strand = strand[1]) %>%
+    write.table(stringr::str_glue("{anno_dir}/coding_genes.bed"),
+                quote = F, row.names = F, col.names = F, sep = '\t')
   pc_genes <- all_genes.gr$gene_name
-  write.table(dplyr::tibble(gene = pc_genes),
-              file = stringr::str_glue("{anno_dir}/genes.list"),
-              quote = FALSE, col.names = FALSE, row.names = FALSE)
 
   olps <- GenomicRanges::findOverlaps(all_genes.gr, drop.self = TRUE, drop.redundant = FALSE)
   olp_genes <- split(pc_genes[olps@to], pc_genes[olps@from])
@@ -102,6 +110,7 @@ process_genomic_annotations <- function(gtf_file, anno_dir, cores) {
         utr.gr <- GenomicRanges::reduce(gr[(gr$type == "UTR") & (gr$exon_number != 1)])
       }
     }
+    utr.gr <- GenomicRanges::resize(utr.gr, fix = "center", width = GenomicRanges::width(utr.gr) + 600)
     return(utr.gr)
   }
   tmp_dir <- stringr::str_glue('{anno_dir}/tmp')
@@ -193,8 +202,8 @@ save_output_files <- function(anno_res, anno_dir, cores) {
       if (!is.null(olps)) {
         others <-
           lapply(olps, function(g) {
-            gene_struc <- readRDS(stringr::str_glue('{anno_dir}/tmp/{g}.rds'))
-            c(gene_struc$pas, gene_struc$utr)
+            other <- readRDS(stringr::str_glue('{anno_dir}/tmp/{g}.rds'))
+            c(other$pas, other$utr3)
           }) %>%
           GenomicRanges::GRangesList() %>%
           unlist() %>%
@@ -255,5 +264,5 @@ prepare_anno <- function(fa_file, gtf_file, anno_dir,
 
   # --- Step 3: Save final output ---
   save_output_files(anno_res, anno_dir, cores)
-
+  file.create(file.path(anno_dir, "done"))
 }

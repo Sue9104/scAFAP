@@ -140,7 +140,7 @@ plot_cov_with_junc <- function(cov.df, junctions, gene.gr, exon.gr, utr.gr,
                                highlight.gr = GenomicRanges::GRanges(),
                                add_to_title = "") {
   if (nrow(cov.df) == 0){
-    logger::log_warn("No coverage data available for coverage plot.")
+    logger::log_debug("No coverage data available for coverage plot.")
     return(ggplot2::ggplot())
   }
   if (!("reads" %in% names(cov.df))) {
@@ -161,7 +161,7 @@ plot_cov_with_junc <- function(cov.df, junctions, gene.gr, exon.gr, utr.gr,
     dplyr::filter(cov.df, start >= pmin, end <= pmax) %>%
     dplyr::mutate(mid = round((start + end) / 2))
   if (nrow(cov.df) == 0){
-    logger::log_warn("No coverage data within gene boundaries for plot.")
+    logger::log_debug("No coverage data within gene boundaries for plot.")
     return(ggplot2::ggplot())
   }
 
@@ -272,6 +272,8 @@ jump_splicing_region <- function(gene_name, gene.gr, utr.gr, exon.gr,
 
   # Step 0: Input Validation and Preprocessing ------------------------------------------
   {
+    # incase pseudogene have two regions
+    gene.gr <- gene.gr[1]
     gene_strand <- as.character(GenomicRanges::strand(gene.gr)[1])
     chrom <- as.character(GenomicRanges::seqnames(gene.gr)[1])
     logger::log_info(stringr::str_glue("Starting analysis for gene: {gene_name}"))
@@ -280,11 +282,6 @@ jump_splicing_region <- function(gene_name, gene.gr, utr.gr, exon.gr,
       "newCoord" = set_names(1:width(gene.gr),
                              nm = as.character(as_tibble(gene.gr)$start:as_tibble(gene.gr)$end))
     )
-
-    # Validate gene.gr
-    if (!is(gene.gr, "GRanges") || length(gene.gr) != 1) {
-      stop("gene.gr must be a single GRanges object with a 'gene_name' metadata column.")
-    }
 
     # read coverages and junctions
     {
