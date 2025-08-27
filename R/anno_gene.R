@@ -88,6 +88,8 @@ process_genomic_annotations <- function(gtf_file, anno_dir, cores) {
     group_by(gene_name) %>%
     summarise(seqnames = seqnames[1], start = min(start), end = max(end),
               width = end - start + 1, strand = strand[1]) %>%
+    ungroup() %>%
+    dplyr::select(seqnames, start, end, width, strand, gene_name) %>%
     write.table(stringr::str_glue("{anno_dir}/coding_genes.bed"),
                 quote = F, row.names = F, col.names = F, sep = '\t')
   pc_genes <- all_genes.gr$gene_name

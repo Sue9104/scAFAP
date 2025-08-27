@@ -27,12 +27,12 @@ adaptive_detect_pas <- function(gene.oi, inbam, outdir, sample,
   })
   logger::log_info("calculate pas for ", gene.oi)
   # --- Step 1: Setup and load required data ---
-  prefix <- stringr::str_glue("{outdir}/tmps/{gene.oi}.{sample}")
-  dir.create(stringr::str_glue("{outdir}/tmps"), showWarnings = F, recursive = T)
+  prefix <- stringr::str_glue("{outdir}/tmps/{sample}/{gene.oi}.{sample}")
+  dir.create(stringr::str_glue("{outdir}/tmps/{sample}"), showWarnings = F, recursive = T)
 
   if (file.exists(stringr::str_glue("{prefix}.pas.matrix.csv"))) return(NULL)
   # Load gene information and other necessary environment data.
-  env_data <- setup_and_load_data(gene.oi, outdir, sample, anno_dir)
+  env_data <- setup_and_load_data(gene.oi, sample, anno_dir)
   if (is.null(env_data)) return(NULL)
   gene_info <- env_data$gene_info
 
@@ -67,7 +67,7 @@ adaptive_detect_pas <- function(gene.oi, inbam, outdir, sample,
   # --- Step 5: Run MCMC analysis (if needed) and generate final output ---
   mcmc_groups <- run_mcmc(
     data$cov_data, peaks,
-    prefix, env_data$py3, env_data$mcmc_py
+    prefix, env_data$mcmc_py
   )
   finalize_results(gene_info, peaks, mcmc_groups, data$cov_data, oldCoords, prefix)
   return(1)
@@ -78,14 +78,13 @@ adaptive_detect_pas <- function(gene.oi, inbam, outdir, sample,
 #' @description Prepares the environment and loads necessary data for the analysis,
 #'   including paths to external tools like `samtools` and `junction_annotation.py`.
 #' @param gene.oi The gene of interest.
-#' @param outdir The output directory.
 #' @param sample The sample name.
 #' @param anno_dir The directory containing annotation files.
 #' @return A list containing `gene_info` and paths to external tools, or `NULL` if
 #'   the annotation file is not found.
 #' @importFrom stringr str_glue
 #' @importFrom logger log_warn
-setup_and_load_data <- function(gene.oi, outdir, sample, anno_dir) {
+setup_and_load_data <- function(gene.oi, sample, anno_dir) {
   anno_file <- stringr::str_glue('{anno_dir}/genes/{gene.oi}.gene_info.rds')
   model_file <- stringr::str_glue('{anno_dir}/genes/{gene.oi}.gene_model.bed')
   if (!file.exists(anno_file) | !file.exists(model_file)) {
@@ -95,11 +94,10 @@ setup_and_load_data <- function(gene.oi, outdir, sample, anno_dir) {
   gene_info <- readRDS(anno_file)
   gene_info$model_file <- model_file
 
-  py3 <- Sys.getenv("PYMC")
   mcmc_py <- system.file("python", "mcmc.py", package = "scAFAP")
   # mcmc_py <- '~/pipelines/scAFAP/inst/python/mcmc.py'
   env_data <- list(gene_info = gene_info,
-                   py3 = py3, mcmc_py = mcmc_py)
+                   mcmc_py = mcmc_py)
   return(env_data)
 }
 
@@ -417,7 +415,6 @@ annotate_and_refine_peaks <- function(gene_info, data, prefix, newCoords, oldCoo
 #' @param cov_data A data frame of coverage data.
 #' @param peaks A data frame of refined peaks.
 #' @param prefix The output file path prefix.
-#' @param py3 The system path to the Python 3 executable.
 #' @param mcmc_py The file path to the MCMC Python script.
 #' @param run_mode A character string specifying the analysis mode (e.g., 'fast' or 'precise').
 #' @param scaler An integer for scaling parameters.
@@ -425,7 +422,7 @@ annotate_and_refine_peaks <- function(gene_info, data, prefix, newCoords, oldCoo
 #' @importFrom stringr str_glue
 #' @import GenomicRanges
 #' @importFrom logger log_info
-run_mcmc <- function(cov_data, peaks, prefix, py3, mcmc_py,
+run_mcmc <- function(cov_data, peaks, prefix, mcmc_py,
                               run_mode = 'fast', scaler = 2) {
   mcmc_groups <- split(peaks$id, cumsum(peaks$s1 > 350))
   mcmc_groups <- mcmc_groups[sapply(mcmc_groups, length) > 1]
@@ -450,7 +447,7 @@ run_mcmc <- function(cov_data, peaks, prefix, py3, mcmc_py,
                 mcmc_infile, sep = ",", quote = F, row.names = F, col.names = F)
 
     cmd <- stringr::str_glue(
-      "{py3} {mcmc_py} ",
+      "python {mcmc_py} ",
       "{mcmc_infile} {length(mcmc_ids)} ",
       "--sigma {peaks$sigma[1]} ",
       "--init {paste(peak$summit, collapse = ' ')} ",
@@ -501,7 +498,7 @@ finalize_results <- function(gene_info, peaks, mcmc_groups, cov_data, oldCoords,
 
     mcmc_prefix <- paste(peak$summit, collapse = '_')
     mcmc_model_file <- stringr::str_glue('{prefix}.{mcmc_prefix}.mcmc.model.csv')
-    if (!file.exists(mcmc_file)) {
+    if (!file.exists(mcmc_model_file)) {
       logger::log_error('MCMC is not finished !!!')
       return(NULL)
     }

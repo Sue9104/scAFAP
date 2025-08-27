@@ -11,10 +11,10 @@
 #' @importFrom stringr str_glue str_split_i
 merge_create_mtx <- function(outdir, sample, overwrite = TRUE) {
   suppressPackageStartupMessages({library(dplyr)})
-  genes <- read.table(stringr::str_glue('{argv$outdir}/{argv$sample}.todo'))$V1
+  genes <- read.table(stringr::str_glue('{outdir}/{sample}.todo'))$V1
 
   # Retrieve all matrix files
-  matrix_files <- Sys.glob(str_glue("{outdir}/tmps/{genes}.{sample}.pas.matrix.csv"))
+  matrix_files <- Sys.glob(str_glue("{outdir}/tmps/{sample}/{genes}.{sample}.pas.matrix.csv"))
   raw_table <- data.table::rbindlist(lapply(matrix_files, data.table::fread), fill = TRUE)
   raw_table[is.na(raw_table)] <- 0
 
@@ -44,7 +44,7 @@ merge_create_mtx <- function(outdir, sample, overwrite = TRUE) {
     version = "3"
   )
 
-  files <- Sys.glob(stringr::str_glue("{outdir}/tmps/{genes}.{sample}.pas.stats.csv"))
+  files <- Sys.glob(stringr::str_glue("{outdir}/tmps/{sample}/{genes}.{sample}.pas.stats.csv"))
   pas.df <-
     purrr::map_dfr(split(files, ceiling(seq_along(files) / 20)),
                    function(x) {

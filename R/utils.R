@@ -14,7 +14,7 @@
 #'   coverage filtering criteria.
 #' @export
 #' @importFrom stringr str_glue
-bam_to_genes <- function(inbam, anno_dir, outdir, sample){
+bam_to_genes <- function(inbam, anno_dir, outdir, sample, cpm = 5){
   # calculate cov
   genes.bed <- stringr::str_glue("{anno_dir}/coding_genes.bed")
   genes.df <- read.table(genes.bed)
@@ -30,8 +30,8 @@ bam_to_genes <- function(inbam, anno_dir, outdir, sample){
                         col.names = c("chrom", "start", "end", "id", "width",
                                    "sites", "total_depth", "percent", "gene_depth"),
                         sep = '\t')
-  covs.df$avg_depth <- round(covs.df$total_depth / covs.df$sites)
-  ids <- covs.df[(covs.df$sites >= 100) & (covs.df$total_depth >= 2000) & (covs.df$avg_depth >=10),"id"]
+  covs.df$cpm_value <- round(covs.df$total_depth / sum(covs.df$total_depth) * 10^6, 2)
+  ids <- covs.df[covs.df$cpm_value > cpm,"id"]
   genes <- as.vector(id2genes[ids])
   logger::log_debug(sample, " available genes: ", length(genes))
   return(genes)
